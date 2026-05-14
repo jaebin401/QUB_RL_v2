@@ -28,22 +28,17 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 #
-# QUB task — Phase A complete.
-# Isaac Gym alphabetical DOF order (relied on by hard-coded indices below):
-#   0:  L_ankle_pitch_joint
-#   1:  L_ankle_roll_joint
-#   2:  L_hip_pitch_joint
-#   3:  L_hip_roll_joint
-#   4:  L_hip_yaw_joint
-#   5:  L_knee_pitch_joint
-#   6:  R_ankle_pitch_joint
-#   7:  R_ankle_roll_joint
-#   8:  R_hip_pitch_joint
-#   9:  R_hip_roll_joint
-#   10: R_hip_yaw_joint
-#   11: R_knee_pitch_joint
-#   12: torso_yaw_joint
-# Convenience index groups defined at module level (used in reward fns).
+# QUB task — Phase A (post-first-run fixes).
+#
+# Isaac Gym DOF order (URDF declaration order, confirmed from training log):
+#   0:  torso_yaw_joint
+#   1:  L_hip_pitch_joint    2: L_hip_roll_joint    3: L_hip_yaw_joint
+#   4:  L_knee_pitch_joint   5: L_ankle_pitch_joint 6: L_ankle_roll_joint
+#   7:  R_hip_pitch_joint    8: R_hip_roll_joint    9: R_hip_yaw_joint
+#   10: R_knee_pitch_joint  11: R_ankle_pitch_joint 12: R_ankle_roll_joint
+#
+# Note: Isaac Gym preserves URDF declaration order here, NOT alphabetical.
+# v1 humanoid-gym was alphabetical — that lesson did not transfer to v2.
 
 import torch
 from torch import Tensor
@@ -72,36 +67,32 @@ import random
 
 
 # --------------------------------------------------------------------------
-# QUB DOF index groups (alphabetical, as Isaac Gym sees them)
+# QUB DOF index groups (URDF declaration order, as Isaac Gym sees them)
 # --------------------------------------------------------------------------
 # All ankle joints (pitch + roll, both legs)
-QUB_ANKLE_IDX = [0, 1, 6, 7]
+QUB_ANKLE_IDX = [5, 6, 11, 12]
 # Ankle pitch only (used for "keep ankle pitch flat in air")
-QUB_ANKLE_PITCH_IDX = [0, 6]
+QUB_ANKLE_PITCH_IDX = [5, 11]
 # Ankle roll only
-QUB_ANKLE_ROLL_IDX = [1, 7]
+QUB_ANKLE_ROLL_IDX = [6, 12]
 # Hip pitch joints (forward/backward swing)
-QUB_HIP_PITCH_IDX = [2, 8]
+QUB_HIP_PITCH_IDX = [1, 7]
 # Hip roll joints
-QUB_HIP_ROLL_IDX = [3, 9]
+QUB_HIP_ROLL_IDX = [2, 8]
 # Hip yaw joints
-QUB_HIP_YAW_IDX = [4, 10]
+QUB_HIP_YAW_IDX = [3, 9]
 # Knee pitch joints
-QUB_KNEE_IDX = [5, 11]
+QUB_KNEE_IDX = [4, 10]
 # Torso yaw
-QUB_TORSO_YAW_IDX = [12]
+QUB_TORSO_YAW_IDX = [0]
 # Non-ankle joints (used in _reward_power: exclude weak ankle actuators)
-QUB_NON_ANKLE_IDX = [2, 3, 4, 5, 8, 9, 10, 11, 12]
+QUB_NON_ANKLE_IDX = [0, 1, 2, 3, 4, 7, 8, 9, 10]
 
 
 class BipedQUB(BaseTask):
     def __init__(
         self, cfg: BipedCfgQUB, sim_params, physics_engine, sim_device, headless
     ):
-        """Parses the provided config file,
-            calls create_sim() (which creates, simulation, terrain and environments),
-            initilizes pytorch buffers used during training
-        """
         self.cfg = cfg
         self.sim_params = sim_params
         self.height_samples = None
@@ -278,22 +269,23 @@ class BipedQUB(BaseTask):
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
 
-        # Sanity print — confirm Isaac Gym DOF order matches our hard-coded index groups.
-        # If this assertion fails, the QUB_*_IDX constants must be regenerated.
+        # Sanity check — verify Isaac Gym DOF order matches our QUB_*_IDX constants.
         expected_order = [
-            "L_ankle_pitch_joint", "L_ankle_roll_joint",
+            "torso_yaw_joint",
             "L_hip_pitch_joint", "L_hip_roll_joint", "L_hip_yaw_joint",
             "L_knee_pitch_joint",
-            "R_ankle_pitch_joint", "R_ankle_roll_joint",
+            "L_ankle_pitch_joint", "L_ankle_roll_joint",
             "R_hip_pitch_joint", "R_hip_roll_joint", "R_hip_yaw_joint",
             "R_knee_pitch_joint",
-            "torso_yaw_joint",
+            "R_ankle_pitch_joint", "R_ankle_roll_joint",
         ]
         if list(self.dof_names) != expected_order:
             print("[QUB] WARNING: Isaac Gym DOF order differs from expected.")
             print("[QUB]   expected:", expected_order)
             print("[QUB]   actual:  ", list(self.dof_names))
             print("[QUB] Update QUB_*_IDX constants in qub_task.py accordingly.")
+        else:
+            print("[QUB] DOF order matches expected (URDF declaration order).")
 
         feet_names = [s for s in body_names if self.cfg.asset.foot_name in s]
         contact_names = []
@@ -776,7 +768,7 @@ class BipedQUB(BaseTask):
                     )
                 )
 
-        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0)
+        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0.0)
 
     def _reward_tracking_contacts_shaped_vel(self):
         foot_velocities = torch.norm(self.foot_velocities, dim=-1)
@@ -807,7 +799,7 @@ class BipedQUB(BaseTask):
                     -((self.foot_velocities[:, i, 2] - self.des_foot_velocity_z) ** 2)
                     / self.cfg.rewards.gait_vel_sigma)
                 )
-        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0)
+        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0.0)
 
     def _reward_tracking_contacts_shaped_height(self):
         foot_heights = self.foot_heights
@@ -829,7 +821,7 @@ class BipedQUB(BaseTask):
                 )
                 stand_phase = desired_contact[:, i]
                 reward += stand_phase * (1 - torch.exp(-(foot_heights[:, i]) ** 2 / self.cfg.rewards.gait_height_sigma))
-        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0)
+        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0.0)
 
     def _reward_feet_distance(self):
         feet_distance = torch.norm(
@@ -904,7 +896,7 @@ class BipedQUB(BaseTask):
                 ),
                 dim=-1) / self.cfg.rewards.height_tracking_sigma
         )
-        return torch.where(self.commands[:, 4] == 1, reward, 0)
+        return torch.where(self.commands[:, 4] == 1, reward, 0.0)
 
     def _reward_zero_command_nominal_state(self):
         """Under zero command, keep hip pitch joints near default.
@@ -938,7 +930,7 @@ class BipedQUB(BaseTask):
         """Reward ankle_pitch near zero on the leg that is in swing (no contact).
         Helps the foot stay parallel to the ground for clean toe-strike.
         """
-        # L_ankle_pitch = idx 0, R_ankle_pitch = idx 6
+        # L_ankle_pitch = idx 5, R_ankle_pitch = idx 11
         # contact_filt[:, 0] is left foot contact, [:, 1] is right foot contact
         # (assumes feet_indices are ordered [L_foot, R_foot] — verified via foot_name).
         l_ankle_pitch = torch.abs(self.dof_pos[:, QUB_ANKLE_PITCH_IDX[0]]) \
