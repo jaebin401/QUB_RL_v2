@@ -28,12 +28,22 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 #
-# Modifications for QUB (KUDOS) project:
-# - Renamed BipedSF -> BipedQUB
-# - Updated config import / type hint
-# - SF-specific hard-coded joint indices (3, 7, [1, 5], etc.) and dof slot ranges
-#   ([6:14], [14:22]) are NOT yet generalized to QUB's 13 DOF.
-#   Marked with TODO(QUB) below; must be fixed before training works correctly.
+# QUB task — Phase A complete.
+# Isaac Gym alphabetical DOF order (relied on by hard-coded indices below):
+#   0:  L_ankle_pitch_joint
+#   1:  L_ankle_roll_joint
+#   2:  L_hip_pitch_joint
+#   3:  L_hip_roll_joint
+#   4:  L_hip_yaw_joint
+#   5:  L_knee_pitch_joint
+#   6:  R_ankle_pitch_joint
+#   7:  R_ankle_roll_joint
+#   8:  R_hip_pitch_joint
+#   9:  R_hip_roll_joint
+#   10: R_hip_yaw_joint
+#   11: R_knee_pitch_joint
+#   12: torso_yaw_joint
+# Convenience index groups defined at module level (used in reward fns).
 
 import torch
 from torch import Tensor
@@ -61,6 +71,29 @@ from typing import Tuple, Dict
 import random
 
 
+# --------------------------------------------------------------------------
+# QUB DOF index groups (alphabetical, as Isaac Gym sees them)
+# --------------------------------------------------------------------------
+# All ankle joints (pitch + roll, both legs)
+QUB_ANKLE_IDX = [0, 1, 6, 7]
+# Ankle pitch only (used for "keep ankle pitch flat in air")
+QUB_ANKLE_PITCH_IDX = [0, 6]
+# Ankle roll only
+QUB_ANKLE_ROLL_IDX = [1, 7]
+# Hip pitch joints (forward/backward swing)
+QUB_HIP_PITCH_IDX = [2, 8]
+# Hip roll joints
+QUB_HIP_ROLL_IDX = [3, 9]
+# Hip yaw joints
+QUB_HIP_YAW_IDX = [4, 10]
+# Knee pitch joints
+QUB_KNEE_IDX = [5, 11]
+# Torso yaw
+QUB_TORSO_YAW_IDX = [12]
+# Non-ankle joints (used in _reward_power: exclude weak ankle actuators)
+QUB_NON_ANKLE_IDX = [2, 3, 4, 5, 8, 9, 10, 11, 12]
+
+
 class BipedQUB(BaseTask):
     def __init__(
         self, cfg: BipedCfgQUB, sim_params, physics_engine, sim_device, headless
@@ -68,14 +101,6 @@ class BipedQUB(BaseTask):
         """Parses the provided config file,
             calls create_sim() (which creates, simulation, terrain and environments),
             initilizes pytorch buffers used during training
-
-        Args:
-            cfg (Dict): Environment config file
-            sim_params (gymapi.SimParams): simulation parameters
-            physics_engine (gymapi.SimType): gymapi.SIM_PHYSX (must be PhysX)
-            device_type (string): 'cuda' or 'cpu'
-            device_id (int): 0, 1, ...
-            headless (bool): Run without rendering if True
         """
         self.cfg = cfg
         self.sim_params = sim_params
@@ -94,17 +119,12 @@ class BipedQUB(BaseTask):
         self.init_done = True
 
     def post_physics_step(self):
-        """check terminations, compute observations and rewards
-        calls self._post_physics_step_callback() for common computations
-        calls self._draw_debug_vis() if needed
-        """
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
 
         self.episode_length_buf += 1
 
-        # prepare quantities
         self.base_quat[:] = self.root_states[:, 3:7]
         self.base_position = self.root_states[:, :3]
         self.base_lin_vel = (self.base_position - self.last_base_position) / self.dt
@@ -123,11 +143,8 @@ class BipedQUB(BaseTask):
         self.dof_pos_int += (self.dof_pos - self.raw_default_dof_pos) * self.dt
         self.power = torch.abs(self.torques * self.dof_vel)
 
-        # self.dof_jerk = (self.last_dof_acc - self.dof_acc) / self.dt
-
         self.compute_foot_state()
 
-        # compute observations, rewards, resets, ...
         self.check_termination()
         self.compute_reward()
 
@@ -135,13 +152,12 @@ class BipedQUB(BaseTask):
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset_idx(env_ids)
-        self.compute_observations()  # in some cases a simulation step might be required to refresh some obs (for example body positions)
+        self.compute_observations()
 
         self.last_actions[:, :, 1] = self.last_actions[:, :, 0]
         self.last_actions[:, :, 0] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
-        # self.last_dof_acc[:] = self.dof_acc[:]
         self.last_base_position[:] = self.base_position[:]
         self.last_foot_positions[:] = self.foot_positions[:]
 
@@ -155,7 +171,6 @@ class BipedQUB(BaseTask):
         """Computes observations"""
         self.obs_buf, self.critic_obs_buf = self.compute_self_observations()
 
-        # add perceptive inputs if not blind
         if self.cfg.terrain.measure_heights:
             heights = (
                 torch.clip(
@@ -167,7 +182,6 @@ class BipedQUB(BaseTask):
             )
             self.obs_buf = torch.cat((self.obs_buf, heights), dim=-1)
 
-        # add noise if needed
         if self.add_noise:
             self.obs_buf += (
                 2 * torch.rand_like(self.obs_buf) - 1
@@ -178,17 +192,6 @@ class BipedQUB(BaseTask):
         )
 
     def _compute_torques(self, actions):
-        """Compute torques from actions.
-            Actions can be interpreted as position or velocity targets given to a PD controller, or directly as scaled torques.
-            [NOTE]: torques must have the same dimension as the number of DOFs, even if some DOFs are not actuated.
-
-        Args:
-            actions (torch.Tensor): Actions
-
-        Returns:
-            [torch.Tensor]: Torques sent to the simulation
-        """
-        # pd controller
         actions_scaled = actions * self.cfg.control.action_scale
 
         control_type = self.cfg.control.control_type
@@ -212,13 +215,14 @@ class BipedQUB(BaseTask):
 
     def _get_noise_scale_vec(self, cfg):
         """Sets a vector used to scale the noise added to the observations.
-            [NOTE]: Must be adapted when changing the observations structure
-
-        Args:
-            cfg (Dict): Environment config file
-
-        Returns:
-            [torch.Tensor]: Vector of scales used to multiply a uniform distribution in [-1, 1]
+        Observation layout (QUB, 13 DOF, total 51 dim):
+            [0:3]    base ang_vel
+            [3:6]    projected gravity
+            [6:19]   dof_pos (13)
+            [19:32]  dof_vel (13)
+            [32:45]  actions (13)
+            [45:47]  clock sin/cos
+            [47:51]  gaits (4)
         """
         noise_vec = torch.zeros_like(self.obs_buf[0])
         self.add_noise = self.cfg.noise.add_noise
@@ -228,26 +232,16 @@ class BipedQUB(BaseTask):
             noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
         )
         noise_vec[3:6] = noise_scales.gravity * noise_level
-        # TODO(QUB): SF had 8 DOF so dof_pos slot was [6:14], dof_vel slot [14:22].
-        # For QUB (13 DOF):  dof_pos -> [6:19], dof_vel -> [19:32], actions -> [32:45]
-        noise_vec[6:14] = (
+        noise_vec[6:19] = (
             noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
         )
-        noise_vec[14:22] = (
+        noise_vec[19:32] = (
             noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
         )
-        noise_vec[22:] = 0.0  # previous actions
+        noise_vec[32:] = 0.0  # actions and clock/gait carry no observation noise
         return noise_vec
 
     def _create_envs(self):
-        """Creates environments:
-        1. loads the robot URDF/MJCF asset,
-        2. For each environment
-           2.1 creates the environment,
-           2.2 calls DOF and Rigid shape properties callbacks,
-           2.3 create actor with these properties and add them to the env
-        3. Store indices of different bodies of the robot
-        """
         asset_path = self.cfg.asset.file.format(
             LEGGED_GYM_ROOT_DIR=LEGGED_GYM_ROOT_DIR
         )
@@ -279,11 +273,28 @@ class BipedQUB(BaseTask):
         dof_props_asset = self.gym.get_asset_dof_properties(robot_asset)
         rigid_shape_props_asset = self.gym.get_asset_rigid_shape_properties(robot_asset)
 
-        # save body names from the asset
         body_names = self.gym.get_asset_rigid_body_names(robot_asset)
         self.dof_names = self.gym.get_asset_dof_names(robot_asset)
         self.num_bodies = len(body_names)
         self.num_dofs = len(self.dof_names)
+
+        # Sanity print — confirm Isaac Gym DOF order matches our hard-coded index groups.
+        # If this assertion fails, the QUB_*_IDX constants must be regenerated.
+        expected_order = [
+            "L_ankle_pitch_joint", "L_ankle_roll_joint",
+            "L_hip_pitch_joint", "L_hip_roll_joint", "L_hip_yaw_joint",
+            "L_knee_pitch_joint",
+            "R_ankle_pitch_joint", "R_ankle_roll_joint",
+            "R_hip_pitch_joint", "R_hip_roll_joint", "R_hip_yaw_joint",
+            "R_knee_pitch_joint",
+            "torso_yaw_joint",
+        ]
+        if list(self.dof_names) != expected_order:
+            print("[QUB] WARNING: Isaac Gym DOF order differs from expected.")
+            print("[QUB]   expected:", expected_order)
+            print("[QUB]   actual:  ", list(self.dof_names))
+            print("[QUB] Update QUB_*_IDX constants in qub_task.py accordingly.")
+
         feet_names = [s for s in body_names if self.cfg.asset.foot_name in s]
         contact_names = []
         if hasattr(self.cfg.asset, "contact_name"):
@@ -328,7 +339,6 @@ class BipedQUB(BaseTask):
             self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False
         )
         for i in range(self.num_envs):
-            # create env instance
             env_handle = self.gym.create_env(
                 self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs))
             )
@@ -397,33 +407,20 @@ class BipedQUB(BaseTask):
             )
     
     def reset_idx(self, env_ids):
-        """Reset some environments.
-            Calls self._reset_dofs(env_ids), self._reset_root_states(env_ids), and self._resample_commands(env_ids)
-            [Optional] calls self._update_terrain_curriculum(env_ids), self.update_command_curriculum(env_ids) and
-            Logs episode info
-            Resets some buffers
-
-        Args:
-            env_ids (list[int]): List of environment ids which must be reset
-        """
         if len(env_ids) == 0:
             return
-        # update curriculum
         if self.cfg.terrain.curriculum:
             self._update_terrain_curriculum(env_ids)
-        # avoid updating command curriculum at each step since the maximum command is common to all envs
         if self.cfg.commands.curriculum:
             time_out_env_ids = self.time_out_buf.nonzero(as_tuple=False).flatten()
             self.update_command_curriculum(time_out_env_ids)
 
-        # reset robot states
         self._reset_dofs(env_ids)
         self._reset_root_states(env_ids)
         self._check_walk_stability(env_ids)
         self._resample_commands(env_ids)
         self._resample_gaits(env_ids)
 
-        # reset buffers
         self.last_actions[env_ids] = 0.0
         self.last_dof_pos[env_ids] = self.dof_pos[env_ids]
         self.last_base_position[env_ids] = self.base_position[env_ids]
@@ -440,25 +437,16 @@ class BipedQUB(BaseTask):
         self.fail_buf[env_ids] = 0
         self.action_fifo[env_ids] = 0
         self.dof_pos_int[env_ids] = 0
-        # fill extras
         self.extras["episode"] = {}
         for key in self.episode_sums.keys():
             self.extras["episode"]["rew_" + key] = (
                     torch.mean(self.episode_sums[key][env_ids]) / self.max_episode_length_s
             )
             self.episode_sums[key][env_ids] = 0.0
-        # send timeout info to the algorithm
         if self.cfg.env.send_timeouts:
             self.extras["time_outs"] = self.time_out_buf | self.edge_reset_buf
 
     def _reset_dofs(self, env_ids):
-        """Resets DOF position and velocities of selected environmments
-        Positions are randomly selected within 0.5:1.5 x default positions.
-        Velocities are set to zero.
-
-        Args:
-            env_ids (List[int]): Environemnt ids
-        """
         n = env_ids.size(0)
         indices = torch.randperm(n)
 
@@ -485,18 +473,7 @@ class BipedQUB(BaseTask):
         )
 
     def step(self, actions):
-        """Apply actions, simulate, call self.post_physics_step()
-
-        Args:
-            actions (torch.Tensor): Tensor of shape (num_envs, num_actions_per_env)
-
-        Returns:
-            obs (torch.Tensor): Tensor of shape (num_envs, num_observations_per_env)
-            rewards (torch.Tensor): Tensor of shape (num_envs)
-            dones (torch.Tensor): Tensor of shape (num_envs)
-        """
         self._action_clip(actions)
-        # step physics and render each frame
         self.render()
         self.pre_physics_step()
         for _ in range(self.cfg.control.decimation):
@@ -519,7 +496,6 @@ class BipedQUB(BaseTask):
             self.compute_dof_vel()
         self.post_physics_step()
 
-        # return clipped obs, clipped states (None), rewards, dones and infos
         clip_obs = self.cfg.normalization.clip_observations
         self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
         return (
@@ -528,12 +504,11 @@ class BipedQUB(BaseTask):
             self.reset_buf,
             self.extras,
             self.obs_history,
-            self.commands[:, :5] * self.commands_scale, # 5 commands
+            self.commands[:, :5] * self.commands_scale,
             self.critic_obs_buf
         )
 
     def compute_self_observations(self):
-        # note that observation noise need to modified accordingly !!!
         obs_buf = torch.cat(
             (
                 self.base_ang_vel * self.obs_scales.ang_vel,
@@ -547,7 +522,6 @@ class BipedQUB(BaseTask):
             ),
             dim=-1,
         )
-        # compute critic_obs_buf
         critic_obs_buf = torch.cat((
             self.base_lin_vel * self.obs_scales.lin_vel, self.obs_buf), dim=-1)
         return obs_buf, critic_obs_buf
@@ -556,14 +530,11 @@ class BipedQUB(BaseTask):
         return (
             self.obs_buf,
             self.obs_history,
-            self.commands[:, :5] * self.commands_scale, # 5 commands
+            self.commands[:, :5] * self.commands_scale,
             self.critic_obs_buf
         )
 
     def _post_physics_step_callback(self):
-        """Callback called before computing terminations, rewards, and observations
-        Default behaviour: Compute ang vel command based on target and heading, compute measured terrain heights and randomly push robots
-        """
         env_ids = (
             (
                     self.episode_length_buf
@@ -597,10 +568,10 @@ class BipedQUB(BaseTask):
 
     def _generate_des_ee_ref(self):
         frequencies = self.gaits[:, 0]
-        mask_0 = (self.gait_indices < 0.25) & (self.gait_indices >= 0.0)  # lift up
-        mask_1 = (self.gait_indices < 0.5) & (self.gait_indices >= 0.25)  # touch down
-        mask_2 = (self.gait_indices < 0.75) & (self.gait_indices >= 0.5)  # lift up
-        mask_3 = (self.gait_indices <= 1.0) & (self.gait_indices >= 0.75)  # touch down
+        mask_0 = (self.gait_indices < 0.25) & (self.gait_indices >= 0.0)
+        mask_1 = (self.gait_indices < 0.5) & (self.gait_indices >= 0.25)
+        mask_2 = (self.gait_indices < 0.75) & (self.gait_indices >= 0.5)
+        mask_3 = (self.gait_indices <= 1.0) & (self.gait_indices >= 0.75)
         swing_start_time = torch.zeros(self.num_envs, device=self.device)
         swing_start_time[mask_1] = 0.25 / frequencies[mask_1]
         swing_start_time[mask_2] = 0.5 / frequencies[mask_2]
@@ -618,11 +589,7 @@ class BipedQUB(BaseTask):
         swing_end_vel[mask_1] = self.cfg.gait.touch_down_vel
         swing_end_vel[mask_3] = self.cfg.gait.touch_down_vel
 
-        # generate desire foot z trajectory
         swing_height = self.gaits[:, 3]
-        # self.des_foot_height = 0.5 * swing_height * (1 - torch.cos(4 * np.pi * self.gait_indices))
-        # self.des_foot_velocity_z = 2 * np.pi * swing_height * frequencies * torch.sin(
-        #     4 * np.pi * self.gait_indices)
 
         start = {'time': swing_start_time, 'position': swing_start_pos * swing_height,
                  'velocity': torch.zeros(self.num_envs, device=self.device)}
@@ -641,16 +608,10 @@ class BipedQUB(BaseTask):
             self.mean_episode_len = torch.mean(self.episode_length_buf[env_ids].float(), dim=0).cpu().item()
         if self.mean_episode_len > 950:
             self.stable_episode_length_count += 1
-            # print("Stable Episode Length:{}, count:{}.".format(self.mean_episode_len, self.stable_episode_length_count))
         else:
             self.stable_episode_length_count = 0
 
     def _resample_commands(self, env_ids, is_start=True):
-        """Randommly select commands of some environments
-
-                Args:
-                    env_ids (List[int]): Environments ids for which new commands are needed
-                """
         self.commands[env_ids, 0] = (self.command_ranges["lin_vel_x"][env_ids, 1]
                                      - self.command_ranges["lin_vel_x"][env_ids, 0]) \
                                     * torch.rand(len(env_ids), device=self.device) \
@@ -712,8 +673,6 @@ class BipedQUB(BaseTask):
             self.commands[env_ids, 4] = 0
 
     def _resample_stand_still_gait_commands(self, env_ids):
-        # indices_to_update = env_ids[self.commands[env_ids, 4] == 1]
-        # self.gaits[indices_to_update, :] = 0.0
         pass
 
     def _resample_stand_still_gait_clock(self):
@@ -780,22 +739,19 @@ class BipedQUB(BaseTask):
 
         self.des_foot_height = torch.zeros(self.num_envs,
                                            dtype=torch.float,
-                                           device=self.device, requires_grad=False, ) # TODO
+                                           device=self.device, requires_grad=False, )
         self.des_foot_velocity_z = torch.zeros(self.num_envs, dtype=torch.float, device=self.device,
-                                               requires_grad=False, ) # TODO
+                                               requires_grad=False, )
 
     def pre_physics_step(self):
         self.rwd_linVelTrackPrev = self._reward_tracking_lin_vel()
         self.rwd_angVelTrackPrev = self._reward_tracking_ang_vel()
         self.rwd_orientationPrev = self._reward_orientation()
-        # self.rwd_jointRegPrev = self._reward_joint_regularization()
         self.rwd_baseHeightPrev = self._reward_base_height()
         if "tracking_contacts_shaped_height" in self.reward_scales.keys():
             self.rwd_swingHeightPrev = self._reward_tracking_contacts_shaped_height()
 
     def sqrdexp(self, x):
-        """ shorthand helper for squared exponential
-        """
         return torch.exp(-torch.square(x) / self.cfg.rewards.tracking_sigma)
     
     # ----------------------rewards----------------------
@@ -832,7 +788,6 @@ class BipedQUB(BaseTask):
                 reward += stand_phase * torch.exp(
                     -foot_velocities[:, i] ** 2 / self.cfg.rewards.gait_vel_sigma
                 )
-                # if self.cfg.terrain.mesh_type == "plane":
                 swing_phase = 1 - desired_contact[:, i]
                 reward += swing_phase * torch.exp(
                     -((self.foot_velocities[:, i, 2] - self.des_foot_velocity_z) ** 2)
@@ -847,7 +802,6 @@ class BipedQUB(BaseTask):
                         -foot_velocities[:, i] ** 2 / self.cfg.rewards.gait_vel_sigma
                     )
                 )
-                # if self.cfg.terrain.mesh_type == "plane":
                 swing_phase = 1 - desired_contact[:, i]
                 reward += swing_phase * (1 - torch.exp(
                     -((self.foot_velocities[:, i, 2] - self.des_foot_velocity_z) ** 2)
@@ -862,7 +816,6 @@ class BipedQUB(BaseTask):
         if self.reward_scales["tracking_contacts_shaped_height"] > 0:
             for i in range(len(self.feet_indices)):
                 swing_phase = 1 - desired_contact[:, i]
-                # if self.cfg.terrain.mesh_type == "plane":
                 reward += swing_phase * torch.exp(
                     -(foot_heights[:, i] - self.des_foot_height) ** 2 / self.cfg.rewards.gait_height_sigma
                 )
@@ -871,7 +824,6 @@ class BipedQUB(BaseTask):
         else:
             for i in range(len(self.feet_indices)):
                 swing_phase = 1 - desired_contact[:, i]
-                # if self.cfg.terrain.mesh_type == "plane":
                 reward += swing_phase * (
                         1 - torch.exp(-(foot_heights[:, i] - self.des_foot_height) ** 2 / self.cfg.rewards.gait_height_sigma)
                 )
@@ -880,7 +832,6 @@ class BipedQUB(BaseTask):
         return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0)
 
     def _reward_feet_distance(self):
-        # Penalize base height away from target
         feet_distance = torch.norm(
             self.foot_positions[:, 0, :2] - self.foot_positions[:, 1, :2], dim=-1
         )
@@ -900,15 +851,15 @@ class BipedQUB(BaseTask):
         return reward
 
     def _reward_power(self):
-        # Penalize torques
-        # TODO(QUB): SF excluded ankle_L (idx 3) and ankle_R (idx 7) — the 2 ankle joints
-        # in its 8-DOF order. For QUB (13 DOF), determine ankle indices once joint
-        # order from URDF is confirmed (likely L_ankle_pitch, L_ankle_roll,
-        # R_ankle_pitch, R_ankle_roll — 4 joints to exclude).
-        joint_array = [i for i in range(self.num_dof)]
-        joint_array.remove(3)
-        joint_array.remove(7)
-        return torch.sum(torch.abs(self.torques[:, joint_array] * self.dof_vel[:, joint_array]), dim=1)
+        """Penalize power use across non-ankle joints.
+        Ankle actuators are weak (17 Nm); they're excluded so the policy isn't
+        discouraged from using them when needed.
+        """
+        return torch.sum(
+            torch.abs(self.torques[:, QUB_NON_ANKLE_IDX]
+                      * self.dof_vel[:, QUB_NON_ANKLE_IDX]),
+            dim=1,
+        )
 
     def _reward_collision(self):
         reward = torch.sum(
@@ -921,33 +872,25 @@ class BipedQUB(BaseTask):
         return reward
 
     def _reward_base_height(self):
-        # Penalize base height away from target
         base_height = torch.mean(
             self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1
         )
-        # reward = torch.square(base_height - self.commands[:, 3])
         reward = torch.abs(base_height - self.cfg.rewards.base_height_target)
-        # return torch.where(self.commands[:, 4] == 0, reward, reward * 1.5)
         return reward
 
     def _reward_orientation(self):
-        # Penalize non flat base orientation
         reward = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
         return reward
 
     def _reward_ankle_torque_limits(self):
-        # TODO(QUB): SF used ankle indices [3, 7] (its 2 ankle joints).
-        # For QUB, replace with all 4 ankle indices once confirmed
-        # (L_ankle_pitch, L_ankle_roll, R_ankle_pitch, R_ankle_roll).
-        torque_limit = torch.cat((self.torque_limits[3].view(1) * self.cfg.rewards.soft_torque_limit,
-                                  self.torque_limits[7].view(1) * self.cfg.rewards.soft_torque_limit),
-                                 dim=-1, )
-        torque = torch.cat((self.torques[:, 3].view(self.num_envs, 1),
-                            self.torques[:, 7].view(self.num_envs, 1)), dim=-1)
-        return torch.sum(
-            torch.pow(torque / torque_limit, 8),
-            dim=1,
-        )
+        """Penalize high torque ratio on all 4 ankle joints (pitch+roll, both legs).
+        Ankle motors are the weakest (17 Nm) and most likely to saturate.
+        """
+        soft = self.cfg.rewards.soft_torque_limit
+        ankle_idx = QUB_ANKLE_IDX
+        torque_limit = self.torque_limits[ankle_idx] * soft  # shape: [4]
+        torque = self.torques[:, ankle_idx]                  # shape: [N, 4]
+        return torch.sum(torch.pow(torque / torque_limit, 8), dim=1)
 
     def _reward_relative_feet_height_tracking(self):
         base_height = torch.mean(
@@ -964,15 +907,16 @@ class BipedQUB(BaseTask):
         return torch.where(self.commands[:, 4] == 1, reward, 0)
 
     def _reward_zero_command_nominal_state(self):
-        # Penalize the hip joint pos in zero command
-        # TODO(QUB): SF hip indices were [1, 5] (hip_L, hip_R in its 8-DOF order).
-        # For QUB the hip joints are hip_pitch / hip_roll / hip_yaw on each leg — 6 total.
-        # Decide which subset to penalize once joint order is confirmed.
+        """Under zero command, keep hip pitch joints near default.
+        Discourages the standing-with-stride local optimum where the robot
+        opens up its hips even with zero velocity command.
+        """
         dof_pos = self.dof_pos - self.raw_default_dof_pos
-        reward = torch.sum(
-            torch.square(dof_pos[:, [1, 5]]), dim=1
+        reward = torch.sum(torch.square(dof_pos[:, QUB_HIP_PITCH_IDX]), dim=1)
+        return reward * torch.logical_and(
+            torch.norm(self.commands[:, :3], dim=1) < 0.05,
+            self.commands[:, 4] == 0,
         )
-        return reward * torch.logical_and(torch.norm(self.commands[:, :3], dim=1) < 0.05, self.commands[:, 4] == 0)
 
     def _reward_foot_landing_vel(self):
         z_vels = self.foot_velocities[:, :, 2]
@@ -983,49 +927,46 @@ class BipedQUB(BaseTask):
         return reward
 
     def _reward_tracking_lin_vel_x(self):
-        # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.square(self.commands[:, 0] - self.base_lin_vel[:, 0])
         return torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma)
 
     def _reward_tracking_lin_vel_y(self):
-        # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.square(self.commands[:, 1] - self.base_lin_vel[:, 1])
         return torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma)
 
     def _reward_keep_ankle_pitch_zero_in_air(self):
-        # TODO(QUB): SF had single ankle pitch per leg (idx 3, 7).
-        # QUB has both ankle_pitch and ankle_roll per leg. Decide whether to
-        # penalize only ankle_pitch in air, or both.
-        ankle_pitch = torch.abs(self.dof_pos[:, 3]) * ~self.contact_filt[:, 0] + torch.abs(
-            self.dof_pos[:, 7]) * ~self.contact_filt[:, 1]
+        """Reward ankle_pitch near zero on the leg that is in swing (no contact).
+        Helps the foot stay parallel to the ground for clean toe-strike.
+        """
+        # L_ankle_pitch = idx 0, R_ankle_pitch = idx 6
+        # contact_filt[:, 0] is left foot contact, [:, 1] is right foot contact
+        # (assumes feet_indices are ordered [L_foot, R_foot] — verified via foot_name).
+        l_ankle_pitch = torch.abs(self.dof_pos[:, QUB_ANKLE_PITCH_IDX[0]]) \
+                        * (~self.contact_filt[:, 0]).float()
+        r_ankle_pitch = torch.abs(self.dof_pos[:, QUB_ANKLE_PITCH_IDX[1]]) \
+                        * (~self.contact_filt[:, 1]).float()
+        ankle_pitch = l_ankle_pitch + r_ankle_pitch
         return torch.exp(-torch.abs(ankle_pitch) / 0.2)
     
     def _reward_lin_vel_z(self):
-        # Penalize z axis base linear velocity
         return torch.square(self.base_lin_vel[:, 2])
 
     def _reward_ang_vel_xy(self):
-        # Penalize xy axes base angular velocity
         return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
 
     def _reward_torques(self):
-        # Penalize torques
         return torch.sum(torch.square(self.torques), dim=1)
 
     def _reward_dof_vel(self):
-        # Penalize dof velocities
         return torch.sum(torch.square(self.dof_vel), dim=1)
 
     def _reward_dof_acc(self):
-        # Penalize dof accelerations
         return torch.sum(torch.square(self.dof_acc), dim=1)
 
     def _reward_action_rate(self):
-        # Penalize changes in actions
         return torch.sum(torch.square(self.actions - self.last_actions[:, :, 0]), dim=1)
 
     def _reward_action_smooth(self):
-        # Penalize changes in actions
         return torch.sum(
             torch.square(
                 self.actions
@@ -1036,7 +977,6 @@ class BipedQUB(BaseTask):
         )
 
     def _reward_termination(self):
-        # Terminal reward / penalty
         return self.reset_buf * ~(self.time_out_buf | self.edge_reset_buf)
 
     def _reward_fail(self):
@@ -1048,16 +988,11 @@ class BipedQUB(BaseTask):
         )
 
     def _reward_dof_pos_limits(self):
-        # Penalize dof positions too close to the limit
-        out_of_limits = -(self.dof_pos - self.dof_pos_limits[:, 0]).clip(
-            max=0.0
-        )  # lower limit
+        out_of_limits = -(self.dof_pos - self.dof_pos_limits[:, 0]).clip(max=0.0)
         out_of_limits += (self.dof_pos - self.dof_pos_limits[:, 1]).clip(min=0.0)
         return torch.sum(out_of_limits, dim=1)
 
     def _reward_dof_vel_limits(self):
-        # Penalize dof velocities too close to the limit
-        # clip to max error = 1 rad/s per joint to avoid huge penalties
         return torch.sum(
             (
                 torch.abs(self.dof_vel)
@@ -1074,19 +1009,16 @@ class BipedQUB(BaseTask):
         )
 
     def _reward_tracking_lin_vel(self):
-        # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.sum(
             torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1
         )
         return torch.exp(-lin_vel_error / self.cfg.rewards.tracking_sigma)
 
     def _reward_tracking_ang_vel(self):
-        # Tracking of angular velocity commands (yaw)
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
         return torch.exp(-ang_vel_error / self.cfg.rewards.ang_tracking_sigma)
 
     def _reward_stand_still(self):
-
         return torch.sum(self.foot_heights, dim=1) * (
             torch.norm(self.commands[:, :3], dim=1) < self.cfg.commands.min_norm
         )
