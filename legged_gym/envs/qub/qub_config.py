@@ -29,12 +29,23 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 #
-# Modifications for QUB (KUDOS) project:
-# - Renamed BipedCfgSF -> BipedCfgQUB, BipedCfgPPOSF -> BipedCfgPPOQUB
-# - Updated asset path, experiment_name, and wandb_project for QUB
-# - default_joint_angles / stiffness / damping dicts are kept as SF (TRON1A) values
-#   as a placeholder. They MUST be replaced with QUB's 13 joint names
-#   (12 leg + torso_yaw) before training. See TODO markers below.
+# QUB cfg — Phase A complete.
+# All 13 joint names use the suffix "_joint" exactly as in QUB.urdf.
+# Isaac Gym alphabetical DOF order (used internally for self.dof_pos[i] etc.):
+#   0:  L_ankle_pitch_joint
+#   1:  L_ankle_roll_joint
+#   2:  L_hip_pitch_joint
+#   3:  L_hip_roll_joint
+#   4:  L_hip_yaw_joint
+#   5:  L_knee_pitch_joint
+#   6:  R_ankle_pitch_joint
+#   7:  R_ankle_roll_joint
+#   8:  R_hip_pitch_joint
+#   9:  R_hip_roll_joint
+#   10: R_hip_yaw_joint
+#   11: R_knee_pitch_joint
+#   12: torso_yaw_joint
+# All hard-coded indices in qub_task.py must follow this order.
 
 from legged_gym.envs.base.base_config import BaseConfig
 
@@ -42,67 +53,42 @@ from legged_gym.envs.base.base_config import BaseConfig
 class BipedCfgQUB(BaseConfig):
     class env:
         num_envs = 8192
-        # num_privileged_group = 0 # 4096
-        # num_proprio_group = num_envs - num_privileged_group
-        # TODO(QUB): recompute num_observations for 13 DOF.
-        # SF (8 DOF) value was 36 = 3(ang_vel) + 3(grav) + 8(dof_pos) + 8(dof_vel) + 8(actions) + 2(clock) + 4(gait)
-        # QUB (13 DOF) target = 3 + 3 + 13 + 13 + 13 + 2 + 4 = 51
-        num_observations = 36
-        num_critic_observations = 3 + num_observations  # add lin_vel to the front
+        # 3 (ang_vel) + 3 (gravity) + 13 (dof_pos) + 13 (dof_vel)
+        # + 13 (actions) + 2 (clock sin/cos) + 4 (gaits) = 51
+        num_observations = 51
+        num_critic_observations = 3 + num_observations  # +lin_vel
         num_height_samples = 117
-        # num_privileged_obs = (
-            # num_observations + 3 + 12 + num_height_samples + 6 + 20 + 6
-        # )  # if not None a priviledge_obs_buf will be returned by step() (critic obs for assymetric training). None is returned otherwise
-        # TODO(QUB): change from 8 to 13 (12 leg + torso_yaw)
-        num_actions = 8
-        env_spacing = 3.0  # not used with heightfields/trimeshes
-        send_timeouts = True  # send time out information to the algorithm
-        episode_length_s = 20  # episode length in seconds
-        obs_history_length = 5  # number of observations stacked together
+        num_actions = 13  # 12 leg + 1 torso_yaw
+        env_spacing = 3.0
+        send_timeouts = True
+        episode_length_s = 20
+        obs_history_length = 5
         dof_vel_use_pos_diff = True
         fail_to_terminal_time_s = 0.5
 
     class terrain:
-        mesh_type = "plane"  # "heightfield" # none, plane, heightfield or trimesh
-        horizontal_scale = 0.1  # [m]
-        vertical_scale = 0.005  # [m]
-        border_size = 25  # [m]
+        mesh_type = "plane"
+        horizontal_scale = 0.1
+        vertical_scale = 0.005
+        border_size = 25
         curriculum = True
         static_friction = 0.4
         dynamic_friction = 0.4
         restitution = 0.8
-        # rough terrain only:
         measure_heights = False
         critic_measure_heights = True
-        measured_points_x = [
-            -0.6,
-            -0.5,
-            -0.4,
-            -0.3,
-            -0.2,
-            -0.1,
-            0.0,
-            0.1,
-            0.2,
-            0.3,
-            0.4,
-            0.5,
-            0.6,
-        ]  # 1mx1.6m rectangle (without center line)
+        measured_points_x = [-0.6, -0.5, -0.4, -0.3, -0.2, -0.1,
+                             0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
         measured_points_y = [-0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4]
-        selected = False  # select a unique terrain type and pass all arguments
-        terrain_kwargs = None  # Dict of arguments for selected terrain
-        max_init_terrain_level = 5 + 4  # starting curriculum state
+        selected = False
+        terrain_kwargs = None
+        max_init_terrain_level = 5 + 4
         terrain_length = 8.0
         terrain_width = 8.0
-        num_rows = 10  # number of terrain rows (levels)
-        num_cols = 20  # number of terrain cols (types)
-        # terrain types: [smooth slope, rough slope, stairs up, stairs down, discrete]
+        num_rows = 10
+        num_cols = 20
         terrain_proportions = [0.1, 0.1, 0.35, 0.25, 0.2]
-        # trimesh only:
-        slope_treshold = (
-            0.75  # slopes above this threshold will be corrected to vertical surfaces
-        )
+        slope_treshold = 0.75
         simplify_grid = False
         edge_width_thresh = 0.01
         high_horizontal_scale = 0.01
@@ -117,137 +103,184 @@ class BipedCfgQUB(BaseConfig):
         non_smooth_max_lin_vel_y = 1.0
         max_ang_vel_yaw = 3.0
         curriculum_threshold = 0.75
-        num_commands = 3 + 2  # default: lin_vel_x, lin_vel_y, ang_vel_yaw, heading (in heading mode ang_vel_yaw is recomputed from heading error)
-        resampling_time = 5.0  # time before command are changed[s]
-        heading_command = False  # if true: compute ang vel command from heading error, only work on adaptive group
+        num_commands = 3 + 2
+        resampling_time = 5.0
+        heading_command = False
         min_norm = 0.1
         zero_command_prob = 0.8
 
         class ranges:
-            lin_vel_x = [-1.0, 1.5]  # min max [m/s]
-            lin_vel_y = [-1.0, 1.0]  # min max [m/s]
-            # lin_vel_x = [-1.7, 1.7]  # min max [m/s]
-            # lin_vel_y = [-1.7, 1.7]  # min max [m/s]
-            ang_vel_yaw = [-1, 1]  # min max [rad/s]
+            # v1 lesson: too-symmetric range around 0 collapsed to standing local optimum.
+            # Start with a slightly positive-biased forward range to encourage walking.
+            lin_vel_x = [-0.5, 1.0]   # [m/s]
+            lin_vel_y = [-0.5, 0.5]
+            ang_vel_yaw = [-1.0, 1.0]
             heading = [-3.14159, 3.14159]
-            # TODO(QUB): adjust commanded base_height range around QUB target (0.845 m)
-            base_height = [0.68, 0.78]  # [0.40, 0.56] # SF value, replace with QUB
+            # QUB nominal pelvis (base) height in standing posture is ~0.78 m
+            # (see base_height_target below). Command range covers a small band.
+            base_height = [0.72, 0.80]
             stand_still = [0, 1]
 
     class gait:
         num_gait_params = 4
-        resampling_time = 5  # time before command are changed[s]
+        resampling_time = 5
         touch_down_vel = 0.0
 
         class ranges:
-            frequencies = [1.0, 1.5]  # [1.0, 2.5]
-            offsets = [0.5, 0.5]  # offset is hard to learn
-            # durations = [0.3, 0.8]  # small durations(<0.4) is hard to learn
-            # frequencies = [2, 2]
-            # offsets = [0.5, 0.5]
+            frequencies = [1.0, 1.5]
+            offsets = [0.5, 0.5]
             durations = [0.5, 0.5]
-            swing_height = [0.10, 0.20]  # [0.0, 0.1]
+            swing_height = [0.08, 0.15]  # slightly lower than SF (smaller QUB)
 
     class init_state:
-        # TODO(QUB): QUB spawn height is 0.811 + 0.038 (foot thickness) + margin = 0.88
-        pos = [0.0, 0.0, 0.8]  # x,y,z [m]   <- SF placeholder
-        rot = [0.0, 0.0, 0.0, 1.0]  # x,y,z,w [quat]
-        lin_vel = [0.0, 0.0, 0.0]  # x,y,z [m/s]
-        ang_vel = [0.0, 0.0, 0.0]  # x,y,z [rad/s]
+        # URDF kinematic chain (legs fully extended, all joints 0):
+        #   base_link -> pelvis (-0.2416) -> hip_r -> hip_y -> thigh (-0.2118)
+        #   -> calf (-0.090) -> ankle (-0.268) -> foot (collision center -0.024)
+        #   = base 0.835 m above ground when fully extended.
+        # We spawn with knees bent, so base sits lower. Spawn slightly above
+        # nominal stance to allow safe drop-and-settle.
+        pos = [0.0, 0.0, 0.88]
+        rot = [0.0, 0.0, 0.0, 1.0]
+        lin_vel = [0.0, 0.0, 0.0]
+        ang_vel = [0.0, 0.0, 0.0]
 
-        # TODO(QUB): Replace with QUB's 13 joint names:
-        #   L_hip_pitch, L_hip_roll, L_hip_yaw, L_knee_pitch,
-        #   L_ankle_pitch, L_ankle_roll,
-        #   R_hip_pitch, R_hip_roll, R_hip_yaw, R_knee_pitch,
-        #   R_ankle_pitch, R_ankle_roll, torso_yaw
-        # The dict keys below are SF (TRON1A) placeholders.
-        default_joint_angles = {  # target angles when action = 0.0
-            "abad_L_Joint": 0.0,
-            "hip_L_Joint": 0.0,
-            "knee_L_Joint": 0.0,
-            "abad_R_Joint": 0.0,
-            "hip_R_Joint": 0.0,
-            "knee_R_Joint": 0.0,
-
-            "ankle_L_Joint": 0.0,
-            "ankle_R_Joint": 0.0
+        # default_joint_angles = zero pose (used for obs delta and action baseline).
+        # All 13 joints listed by exact URDF name; values are radians.
+        default_joint_angles = {
+            "torso_yaw_joint":      0.0,
+            "L_hip_pitch_joint":    0.0,
+            "L_hip_roll_joint":     0.0,
+            "L_hip_yaw_joint":      0.0,
+            "L_knee_pitch_joint":   0.0,
+            "L_ankle_pitch_joint":  0.0,
+            "L_ankle_roll_joint":   0.0,
+            "R_hip_pitch_joint":    0.0,
+            "R_hip_roll_joint":     0.0,
+            "R_hip_yaw_joint":      0.0,
+            "R_knee_pitch_joint":   0.0,
+            "R_ankle_pitch_joint":  0.0,
+            "R_ankle_roll_joint":   0.0,
         }
 
-        # TODO(QUB): same — replace with QUB 13-joint dict.
-        # Use slight knee/hip flexion for a stable standing posture.
+        # init_stand_joint_angles = stable bent-knee standing posture.
+        # Pitch sign convention (from URDF axes):
+        #   L_hip_pitch axis = +Y  -> negative = forward swing (we want backward/flex
+        #     to lower the hip) -> actually: convention is robot-specific.
+        #     We use the v1-tested values: hip_pitch flexion ~0.30, knee bend ~0.60,
+        #     ankle pitch counter-rotate ~0.30 to keep foot flat.
+        # Signs below match URDF axis directions:
+        #   L_hip_pitch axis +Y, R_hip_pitch axis -Y  -> same physical direction,
+        #     opposite sign.
+        #   L_knee_pitch axis -Y, R_knee_pitch axis +Y -> same physical direction,
+        #     opposite sign.
+        #   L_ankle_pitch and R_ankle_pitch both axis +Y -> SAME sign for same
+        #     physical rotation.
         init_stand_joint_angles = {
-            "abad_L_Joint": 0.0,
-            "hip_L_Joint": 0.58,
-            "knee_L_Joint": 1.35,
-            "abad_R_Joint": 0.0,
-            "hip_R_Joint": -0.58,
-            "knee_R_Joint": -1.35,
+            "torso_yaw_joint":      0.0,
 
-            "ankle_L_Joint": -0.8,
-            "ankle_R_Joint": -0.8
+            # Left leg: flex hip, bend knee, counter-rotate ankle
+            "L_hip_pitch_joint":    -0.30,   # forward flexion
+            "L_hip_roll_joint":      0.0,
+            "L_hip_yaw_joint":       0.0,
+            "L_knee_pitch_joint":   -0.60,   # knee bend (axis -Y)
+            "L_ankle_pitch_joint":   0.30,   # foot stays flat
+            "L_ankle_roll_joint":    0.0,
+
+            # Right leg: mirrored signs where axes differ
+            "R_hip_pitch_joint":     0.30,   # forward flexion (axis -Y, sign flips)
+            "R_hip_roll_joint":      0.0,
+            "R_hip_yaw_joint":       0.0,
+            "R_knee_pitch_joint":    0.60,   # knee bend (axis +Y, sign flips vs L)
+            "R_ankle_pitch_joint":   0.30,   # SAME sign as L (both +Y axis)
+            "R_ankle_roll_joint":    0.0,
         }
 
     class control:
         action_scale = 0.25
-
         control_type = "P"
-        # TODO(QUB): replace SF joint keys with QUB joint names.
-        # v1 (humanoid-gym) used substring matching like "hip_pitch", "knee", "ankle".
-        # tron1 uses full joint name keys — both work; keep full names here.
-        stiffness = {
-            "abad_L_Joint": 45,
-            "hip_L_Joint": 45,
-            "knee_L_Joint": 45,
-            "abad_R_Joint": 45,
-            "hip_R_Joint": 45,
-            "knee_R_Joint": 45,
 
-            "ankle_L_Joint": 45,
-            "ankle_R_Joint": 45,
+        # Kp/Kd scaled by joint torque rating (effort limit in URDF):
+        #   hip_*     effort=60  Nm
+        #   knee      effort=120 Nm
+        #   ankle_*   effort=17  Nm
+        #   torso_yaw effort=60  Nm
+        # legged_gym matches keys by substring against full joint names.
+        stiffness = {
+            "torso_yaw_joint":      80.0,
+
+            "L_hip_pitch_joint":    80.0,
+            "L_hip_roll_joint":     80.0,
+            "L_hip_yaw_joint":      80.0,
+            "L_knee_pitch_joint":  120.0,
+            "L_ankle_pitch_joint":  40.0,
+            "L_ankle_roll_joint":   40.0,
+
+            "R_hip_pitch_joint":    80.0,
+            "R_hip_roll_joint":     80.0,
+            "R_hip_yaw_joint":      80.0,
+            "R_knee_pitch_joint":  120.0,
+            "R_ankle_pitch_joint":  40.0,
+            "R_ankle_roll_joint":   40.0,
         }  # [N*m/rad]
         damping = {
-            "abad_L_Joint": 1.5,
-            "hip_L_Joint": 1.5,
-            "knee_L_Joint": 1.5,
-            "abad_R_Joint": 1.5,
-            "hip_R_Joint": 1.5,
-            "knee_R_Joint": 1.5,
+            "torso_yaw_joint":       2.0,
 
-            "ankle_L_Joint": 0.8,
-            "ankle_R_Joint": 0.8,
+            "L_hip_pitch_joint":     2.0,
+            "L_hip_roll_joint":      2.0,
+            "L_hip_yaw_joint":       2.0,
+            "L_knee_pitch_joint":    3.0,
+            "L_ankle_pitch_joint":   1.0,
+            "L_ankle_roll_joint":    1.0,
+
+            "R_hip_pitch_joint":     2.0,
+            "R_hip_roll_joint":      2.0,
+            "R_hip_yaw_joint":       2.0,
+            "R_knee_pitch_joint":    3.0,
+            "R_ankle_pitch_joint":   1.0,
+            "R_ankle_roll_joint":    1.0,
         }  # [N*m*s/rad]
-        # decimation: Number of control action updates @ sim DT per policy DT
-        # dt=0.0025 -> sim 400Hz; decimation=8 -> policy 50Hz (matches QUB target)
+
+        # sim dt = 0.0025 -> 400 Hz; decimation 8 -> policy 50 Hz (matches QUB controller).
         decimation = 8
-        user_torque_limit = 80.0
-        max_power = 1000.0  # [W]
+        # Conservative torque cap (below max effort 120 Nm of knee).
+        user_torque_limit = 120.0
+        max_power = 1000.0
 
         pull_off_robots = False
         pull_interval_s = 6
         max_pull_vel_z = 0.25
-        force_duration_s = 3.0  # external force application duration
+        force_duration_s = 3.0
 
     class asset:
-        # QUB URDF path
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/QUB/urdf/QUB.urdf"
         name = "qub"
-        # TODO(QUB): verify foot link name in QUB URDF. v1 used "ankle_roll_link" or similar.
-        # If QUB URDF foot link contains "ankle" substring, keep this; otherwise update.
-        foot_name = "ankle"
-        foot_radius = 0.00
-        # TODO(QUB): verify these substrings match QUB URDF link names.
-        # QUB has "knee_pitch_link", "hip_*_link", "base_link", "torso_link".
-        penalize_contacts_on = ["knee", "hip"]
-        terminate_after_contacts_on = ["base"]  # SF had ["abad", "base"]; QUB has no abad
+
+        # Foot link in URDF is "L_foot_link" / "R_foot_link".
+        # Substring "foot" cleanly matches both feet but NOT other body parts.
+        foot_name = "foot"
+        foot_radius = 0.0  # box collision used in v1; URDF uses STL mesh here
+
+        # URDF links inspected:
+        #   base_link, pelvis_link,
+        #   *_hip_r_link, *_hip_y_link, *_thigh_link, *_calf_link,
+        #   *_ankle_link, *_foot_link
+        # Penalize contact on legs (excluding foot itself):
+        #   "thigh"  -> *_thigh_link
+        #   "calf"   -> *_calf_link  (this is the "shin/knee" segment)
+        #   "hip"    -> *_hip_r_link, *_hip_y_link
+        penalize_contacts_on = ["thigh", "calf", "hip"]
+
+        # Terminate on torso/base contact (robot fell).
+        # "base" matches "base_link"; "pelvis" matches "pelvis_link".
+        terminate_after_contacts_on = ["base", "pelvis"]
+
         disable_gravity = False
-        collapse_fixed_joints = True  # merge bodies connected by fixed joints. Specific fixed joints can be kept by adding " <... dont_collapse="true">
-        fix_base_link = False  # fixe the base of the robot
-        default_dof_drive_mode = 3  # see GymDofDriveModeFlags (0 is none, 1 is pos tgt, 2 is vel tgt, 3 effort)
-        self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
-        replace_cylinder_with_capsule = True  # replace collision cylinders with capsules, leads to faster/more stable simulation
-        flip_visual_attachments = (
-            False  # Some .obj meshes must be flipped from y-up to z-up
-        )
+        collapse_fixed_joints = True
+        fix_base_link = False
+        default_dof_drive_mode = 3  # effort mode for PD controller
+        self_collisions = 0
+        replace_cylinder_with_capsule = True
+        flip_visual_attachments = False
 
         density = 0.001
         angular_damping = 0.0
@@ -293,20 +326,20 @@ class BipedCfgQUB(BaseConfig):
 
             tracking_lin_vel_x = 1.5
             tracking_lin_vel_y = 1.5
-            tracking_ang_vel = 1
+            tracking_ang_vel = 1.0
 
-            # regulation related rewards
-            base_height = -10
+            # regulation
+            base_height = -10.0
             lin_vel_z = -0.5
             ang_vel_xy = -0.05
             torques = -0.00008
             dof_acc = -2.5e-7
             action_rate = -0.01
             dof_pos_limits = -2.0
-            collision = -100  # -1
+            collision = -100.0
             action_smooth = -0.01
             orientation = -5.0
-            feet_distance = -100
+            feet_distance = -100.0
             feet_regulation = -0.05
             tracking_contacts_shaped_force = -2.0
             tracking_contacts_shaped_vel = -2.0
@@ -319,23 +352,27 @@ class BipedCfgQUB(BaseConfig):
             keep_ankle_pitch_zero_in_air = 1.0
             foot_landing_vel = -10.0
 
-        only_positive_rewards = False  # if true negative total rewards are clipped at zero (avoids early termination problems)
+        only_positive_rewards = False
         clip_reward = 100
         clip_single_reward = 5
-        tracking_sigma = 0.2  # tracking reward = exp(-error^2/sigma)
-        ang_tracking_sigma = 0.25  # tracking reward = exp(-error^2/sigma)
+        tracking_sigma = 0.2
+        ang_tracking_sigma = 0.25
         height_tracking_sigma = 0.01
-        soft_dof_pos_limit = (
-            0.95  # percentage of urdf limits, values above this limit are penalized
-        )
+        soft_dof_pos_limit = 0.95
         soft_dof_vel_limit = 1.0
         soft_torque_limit = 0.8
-        # TODO(QUB): set to 0.845 (QUB nominal pelvis height)
-        base_height_target = 0.75  # SF value placeholder
-        feet_height_target = 0.10
-        # TODO(QUB): set to QUB nominal stance width (measure from URDF or set ~0.18)
-        min_feet_distance = 0.20
-        max_contact_force = 100.0  # forces above this value are penalized
+
+        # Standing posture base height: with hip_pitch 0.30 + knee 0.60 + ankle 0.30,
+        # base drops by roughly leg_len * (1 - cos(hip)) + extra ~ 0.05 m from fully
+        # extended 0.835 m. Use 0.78 as target.
+        base_height_target = 0.78
+
+        feet_height_target = 0.08
+        # QUB hip-to-hip distance: 0.1159 + 0.1165 = 0.2324 m laterally.
+        # Use slightly narrower minimum (feet can come closer than hips).
+        min_feet_distance = 0.18
+
+        max_contact_force = 100.0
         kappa_gait_probs = 0.05
         gait_force_sigma = 25.0
         gait_vel_sigma = 0.25
@@ -353,14 +390,14 @@ class BipedCfgQUB(BaseConfig):
             height_measurements = 5.0
             contact_forces = 0.01
             torque = 0.05
-            base_z = 1. / 0.6565
+            base_z = 1.0 / 0.78  # normalize by nominal base height
 
         clip_observations = 100.0
         clip_actions = 100.0
 
     class noise:
         add_noise = True
-        noise_level = 1.5  # scales other values
+        noise_level = 1.5
 
         class noise_scales:
             dof_pos = 0.01
@@ -370,34 +407,30 @@ class BipedCfgQUB(BaseConfig):
             gravity = 0.05
             height_measurements = 0.1
 
-    # viewer camera:
     class viewer:
         ref_env = 0
-        pos = [5, -5, 3]  # [m]
-        # lookat = [11.0, 5, 3.0]  # [m]
-        lookat = [0, 0, 0]  # [m]
+        pos = [5, -5, 3]
+        lookat = [0, 0, 0]
         realtime_plot = True
 
     class sim:
         dt = 0.0025
         substeps = 1
-        gravity = [0.0, 0.0, -9.81]  # [m/s^2]
-        up_axis = 1  # 0 is y, 1 is z
+        gravity = [0.0, 0.0, -9.81]
+        up_axis = 1
 
         class physx:
             num_threads = 0
-            solver_type = 1  # 0: pgs, 1: tgs
+            solver_type = 1
             num_position_iterations = 4
             num_velocity_iterations = 0
-            contact_offset = 0.01  # [m]
-            rest_offset = 0.0  # [m]
-            bounce_threshold_velocity = 0.5  # 0.5 [m/s]
+            contact_offset = 0.01
+            rest_offset = 0.0
+            bounce_threshold_velocity = 0.5
             max_depenetration_velocity = 1.0
-            max_gpu_contact_pairs = 2 ** 23  # 2**24 -> needed for 8000 envs and more
+            max_gpu_contact_pairs = 2 ** 23
             default_buffer_size_multiplier = 5
-            contact_collection = (
-                2  # 0: never, 1: last sub-step, 2: all sub-steps (default=2)
-            )
+            contact_collection = 2
 
 
 class BipedCfgPPOQUB(BaseConfig):
@@ -417,26 +450,24 @@ class BipedCfgPPOQUB(BaseConfig):
         init_noise_std = 1.0
         actor_hidden_dims = [512, 256, 128]
         critic_hidden_dims = [512, 256, 128]
-        activation = "elu"  # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
+        activation = "elu"
         orthogonal_init = False
         fix_std_noise_value = None
 
     class algorithm:
-        # PPO training params
         value_loss_coef = 1.0
         use_clipped_value_loss = True
         clip_param = 0.2
         entropy_coef = 0.01
         num_learning_epochs = 5
-        num_mini_batches = 4  # mini batch size = num_envs*nsteps / nminibatches
-        learning_rate = 1.0e-3  # 5.e-4
-        schedule = "adaptive"  # could be adaptive, fixed
+        num_mini_batches = 4
+        learning_rate = 1.0e-3
+        schedule = "adaptive"
         gamma = 0.99
         lam = 0.95
         desired_kl = 0.01
         max_grad_norm = 1.0
 
-        # Extra training params
         est_learning_rate = 1.0e-3
         ts_learning_rate = 1.0e-4
         critic_take_latent = True
@@ -445,18 +476,16 @@ class BipedCfgPPOQUB(BaseConfig):
         encoder_class_name = "MLP_Encoder"
         policy_class_name = "ActorCritic"
         algorithm_class_name = "PPO"
-        num_steps_per_env = 24  # per iteration
-        max_iterations = 10000  # number of policy updates
+        num_steps_per_env = 24
+        max_iterations = 10000
 
-        # logging
         logger = "tensorboard"
         exptid = ""
         wandb_project = "legged_gym_QUB"
-        save_interval = 500  # check for potential saves every this many iterations
+        save_interval = 500
         experiment_name = "QUB"
         run_name = ""
-        # load and resume
         resume = False
-        load_run = -1  # -1 = last run
-        checkpoint = -1  # -1 = last saved model
-        resume_path = None  # updated from load_run and chkpt
+        load_run = -1
+        checkpoint = -1
+        resume_path = None
