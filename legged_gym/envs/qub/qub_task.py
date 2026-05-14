@@ -311,8 +311,8 @@ class BipedQUB(BaseTask):
         start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
 
         self._get_env_origins()
-        env_lower = gymapi.Vec3(0.0, 0.0, 0.0)
-        env_upper = gymapi.Vec3(0.0, 0.0, 0.0)
+        env_lower = gymapi.Vec3(0.0, 0.0, torch.zeros_like(reward))
+        env_upper = gymapi.Vec3(0.0, 0.0, torch.zeros_like(reward))
         self.actor_handles = []
         self.envs = []
         self.friction_coef = torch.zeros(
@@ -768,7 +768,7 @@ class BipedQUB(BaseTask):
                     )
                 )
 
-        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0.0)
+        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), torch.zeros_like(reward))
 
     def _reward_tracking_contacts_shaped_vel(self):
         foot_velocities = torch.norm(self.foot_velocities, dim=-1)
@@ -799,7 +799,7 @@ class BipedQUB(BaseTask):
                     -((self.foot_velocities[:, i, 2] - self.des_foot_velocity_z) ** 2)
                     / self.cfg.rewards.gait_vel_sigma)
                 )
-        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0.0)
+        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), torch.zeros_like(reward))
 
     def _reward_tracking_contacts_shaped_height(self):
         foot_heights = self.foot_heights
@@ -821,7 +821,7 @@ class BipedQUB(BaseTask):
                 )
                 stand_phase = desired_contact[:, i]
                 reward += stand_phase * (1 - torch.exp(-(foot_heights[:, i]) ** 2 / self.cfg.rewards.gait_height_sigma))
-        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), 0.0)
+        return torch.where(self.commands[:, 4] == 0, reward / len(self.feet_indices), torch.zeros_like(reward))
 
     def _reward_feet_distance(self):
         feet_distance = torch.norm(
@@ -896,7 +896,7 @@ class BipedQUB(BaseTask):
                 ),
                 dim=-1) / self.cfg.rewards.height_tracking_sigma
         )
-        return torch.where(self.commands[:, 4] == 1, reward, 0.0)
+        return torch.where(self.commands[:, 4] == 1, reward, torch.zeros_like(reward))
 
     def _reward_zero_command_nominal_state(self):
         """Under zero command, keep hip pitch joints near default.
