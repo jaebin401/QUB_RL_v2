@@ -311,8 +311,8 @@ class BipedQUB(BaseTask):
         start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
 
         self._get_env_origins()
-        env_lower = gymapi.Vec3(0.0, 0.0, torch.zeros_like(reward))
-        env_upper = gymapi.Vec3(0.0, 0.0, torch.zeros_like(reward))
+        env_lower = gymapi.Vec3(0.0, 0.0, 0.0)
+        env_upper = gymapi.Vec3(0.0, 0.0, 0.0)
         self.actor_handles = []
         self.envs = []
         self.friction_coef = torch.zeros(
