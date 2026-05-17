@@ -367,7 +367,7 @@ class BipedCfgQUB(BaseConfig):
             contact_offset = 0.01
             rest_offset = 0.0
             bounce_threshold_velocity = 0.5
-            max_depenetration_velocity = 1.0
+            max_depenetration_velocity = 100.0
             max_gpu_contact_pairs = 2 ** 23
             default_buffer_size_multiplier = 5
             contact_collection = 2
