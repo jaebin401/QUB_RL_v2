@@ -29,23 +29,15 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 #
-# QUB cfg — Phase A complete.
-# All 13 joint names use the suffix "_joint" exactly as in QUB.urdf.
-# Isaac Gym alphabetical DOF order (used internally for self.dof_pos[i] etc.):
-#   0:  L_ankle_pitch_joint
-#   1:  L_ankle_roll_joint
-#   2:  L_hip_pitch_joint
-#   3:  L_hip_roll_joint
-#   4:  L_hip_yaw_joint
-#   5:  L_knee_pitch_joint
-#   6:  R_ankle_pitch_joint
-#   7:  R_ankle_roll_joint
-#   8:  R_hip_pitch_joint
-#   9:  R_hip_roll_joint
-#   10: R_hip_yaw_joint
-#   11: R_knee_pitch_joint
-#   12: torso_yaw_joint
-# All hard-coded indices in qub_task.py must follow this order.
+# QUB cfg — Phase A + first-step stabilization fixes.
+#
+# v1 history: SW2URDF inertia symmetry caused simulation instability.
+# Initial Phase A run blew up at first physics step (dof_pos/dof_vel -> NaN,
+# actions ~119 even with clip=100, sampled from N(0,1) policy at init).
+# Stabilization changes applied here (vs prior Phase A cfg):
+#   - clip_actions: 100 -> 5    (most important; prevents PD-controller blow-up)
+#   - domain_rand.* :  all toggleable randomizations turned OFF until baseline
+#                       walks stably (then re-enable for sim-to-real robustness)
 
 from legged_gym.envs.base.base_config import BaseConfig
 
@@ -110,14 +102,10 @@ class BipedCfgQUB(BaseConfig):
         zero_command_prob = 0.8
 
         class ranges:
-            # v1 lesson: too-symmetric range around 0 collapsed to standing local optimum.
-            # Start with a slightly positive-biased forward range to encourage walking.
-            lin_vel_x = [-0.5, 1.0]   # [m/s]
+            lin_vel_x = [-0.5, 1.0]
             lin_vel_y = [-0.5, 0.5]
             ang_vel_yaw = [-1.0, 1.0]
             heading = [-3.14159, 3.14159]
-            # QUB nominal pelvis (base) height in standing posture is ~0.78 m
-            # (see base_height_target below). Command range covers a small band.
             base_height = [0.72, 0.80]
             stand_still = [0, 1]
 
@@ -130,22 +118,14 @@ class BipedCfgQUB(BaseConfig):
             frequencies = [1.0, 1.5]
             offsets = [0.5, 0.5]
             durations = [0.5, 0.5]
-            swing_height = [0.08, 0.15]  # slightly lower than SF (smaller QUB)
+            swing_height = [0.08, 0.15]
 
     class init_state:
-        # URDF kinematic chain (legs fully extended, all joints 0):
-        #   base_link -> pelvis (-0.2416) -> hip_r -> hip_y -> thigh (-0.2118)
-        #   -> calf (-0.090) -> ankle (-0.268) -> foot (collision center -0.024)
-        #   = base 0.835 m above ground when fully extended.
-        # We spawn with knees bent, so base sits lower. Spawn slightly above
-        # nominal stance to allow safe drop-and-settle.
         pos = [0.0, 0.0, 0.88]
         rot = [0.0, 0.0, 0.0, 1.0]
         lin_vel = [0.0, 0.0, 0.0]
         ang_vel = [0.0, 0.0, 0.0]
 
-        # default_joint_angles = zero pose (used for obs delta and action baseline).
-        # All 13 joints listed by exact URDF name; values are radians.
         default_joint_angles = {
             "torso_yaw_joint":      0.0,
             "L_hip_pitch_joint":    0.0,
@@ -162,36 +142,21 @@ class BipedCfgQUB(BaseConfig):
             "R_ankle_roll_joint":   0.0,
         }
 
-        # init_stand_joint_angles = stable bent-knee standing posture.
-        # Pitch sign convention (from URDF axes):
-        #   L_hip_pitch axis = +Y  -> negative = forward swing (we want backward/flex
-        #     to lower the hip) -> actually: convention is robot-specific.
-        #     We use the v1-tested values: hip_pitch flexion ~0.30, knee bend ~0.60,
-        #     ankle pitch counter-rotate ~0.30 to keep foot flat.
-        # Signs below match URDF axis directions:
-        #   L_hip_pitch axis +Y, R_hip_pitch axis -Y  -> same physical direction,
-        #     opposite sign.
-        #   L_knee_pitch axis -Y, R_knee_pitch axis +Y -> same physical direction,
-        #     opposite sign.
-        #   L_ankle_pitch and R_ankle_pitch both axis +Y -> SAME sign for same
-        #     physical rotation.
         init_stand_joint_angles = {
             "torso_yaw_joint":      0.0,
 
-            # Left leg: flex hip, bend knee, counter-rotate ankle
-            "L_hip_pitch_joint":    -0.30,   # forward flexion
+            "L_hip_pitch_joint":    -0.30,
             "L_hip_roll_joint":      0.0,
             "L_hip_yaw_joint":       0.0,
-            "L_knee_pitch_joint":   -0.60,   # knee bend (axis -Y)
-            "L_ankle_pitch_joint":   0.30,   # foot stays flat
+            "L_knee_pitch_joint":   -0.60,
+            "L_ankle_pitch_joint":   0.30,
             "L_ankle_roll_joint":    0.0,
 
-            # Right leg: mirrored signs where axes differ
-            "R_hip_pitch_joint":     0.30,   # forward flexion (axis -Y, sign flips)
+            "R_hip_pitch_joint":     0.30,
             "R_hip_roll_joint":      0.0,
             "R_hip_yaw_joint":       0.0,
-            "R_knee_pitch_joint":    0.60,   # knee bend (axis +Y, sign flips vs L)
-            "R_ankle_pitch_joint":   0.30,   # SAME sign as L (both +Y axis)
+            "R_knee_pitch_joint":    0.60,
+            "R_ankle_pitch_joint":   0.30,
             "R_ankle_roll_joint":    0.0,
         }
 
@@ -199,12 +164,6 @@ class BipedCfgQUB(BaseConfig):
         action_scale = 0.25
         control_type = "P"
 
-        # Kp/Kd scaled by joint torque rating (effort limit in URDF):
-        #   hip_*     effort=60  Nm
-        #   knee      effort=120 Nm
-        #   ankle_*   effort=17  Nm
-        #   torso_yaw effort=60  Nm
-        # legged_gym matches keys by substring against full joint names.
         stiffness = {
             "torso_yaw_joint":      80.0,
 
@@ -221,7 +180,7 @@ class BipedCfgQUB(BaseConfig):
             "R_knee_pitch_joint":  120.0,
             "R_ankle_pitch_joint":  40.0,
             "R_ankle_roll_joint":   40.0,
-        }  # [N*m/rad]
+        }
         damping = {
             "torso_yaw_joint":       2.0,
 
@@ -238,11 +197,9 @@ class BipedCfgQUB(BaseConfig):
             "R_knee_pitch_joint":    3.0,
             "R_ankle_pitch_joint":   1.0,
             "R_ankle_roll_joint":    1.0,
-        }  # [N*m*s/rad]
+        }
 
-        # sim dt = 0.0025 -> 400 Hz; decimation 8 -> policy 50 Hz (matches QUB controller).
         decimation = 8
-        # Conservative torque cap (below max effort 120 Nm of knee).
         user_torque_limit = 120.0
         max_power = 1000.0
 
@@ -254,34 +211,17 @@ class BipedCfgQUB(BaseConfig):
     class asset:
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/QUB/urdf/QUB.urdf"
         name = "qub"
-
-        # Foot link in URDF is "L_foot_link" / "R_foot_link".
-        # Substring "foot" cleanly matches both feet but NOT other body parts.
         foot_name = "foot"
-        foot_radius = 0.0  # box collision used in v1; URDF uses STL mesh here
-
-        # URDF links inspected:
-        #   base_link, pelvis_link,
-        #   *_hip_r_link, *_hip_y_link, *_thigh_link, *_calf_link,
-        #   *_ankle_link, *_foot_link
-        # Penalize contact on legs (excluding foot itself):
-        #   "thigh"  -> *_thigh_link
-        #   "calf"   -> *_calf_link  (this is the "shin/knee" segment)
-        #   "hip"    -> *_hip_r_link, *_hip_y_link
+        foot_radius = 0.0
         penalize_contacts_on = ["thigh", "calf", "hip"]
-
-        # Terminate on torso/base contact (robot fell).
-        # "base" matches "base_link"; "pelvis" matches "pelvis_link".
         terminate_after_contacts_on = ["base", "pelvis"]
-
         disable_gravity = False
         collapse_fixed_joints = True
         fix_base_link = False
-        default_dof_drive_mode = 3  # effort mode for PD controller
+        default_dof_drive_mode = 3
         self_collisions = 0
         replace_cylinder_with_capsule = True
         flip_visual_attachments = False
-
         density = 0.001
         angular_damping = 0.0
         linear_damping = 0.0
@@ -291,32 +231,35 @@ class BipedCfgQUB(BaseConfig):
         thickness = 0.01
 
     class domain_rand:
-        randomize_friction = True
+        # TEMPORARILY DISABLED for stabilization (re-enable once baseline walks).
+        # If any of these caused the first-step NaN blow-up, turning them off
+        # narrows down the source.
+        randomize_friction = False
         friction_range = [0.0, 1.6]
-        randomize_restitution = True
+        randomize_restitution = False
         restitution_range = [0.0, 1.0]
-        randomize_base_mass = True
+        randomize_base_mass = False
         added_mass_range = [-0.5, 5]
-        randomize_base_com = True
+        randomize_base_com = False
         rand_com_vec = [0.03, 0.02, 0.03]
-        randomize_inertia = True
+        randomize_inertia = False
         randomize_inertia_range = [0.8, 1.2]
-        push_robots = True
+        push_robots = False          # was True
         push_interval_s = 7
         max_push_vel_xy = 1.0
         rand_force = False
         force_resampling_time_s = 15
         max_force = 50.0
         rand_force_curriculum_level = 0
-        randomize_Kp = True
+        randomize_Kp = False
         randomize_Kp_range = [0.8, 1.2]
-        randomize_Kd = True
+        randomize_Kd = False
         randomize_Kd_range = [0.8, 1.2]
-        randomize_motor_torque = True
+        randomize_motor_torque = False
         randomize_motor_torque_range = [0.8, 1.2]
-        randomize_default_dof_pos = True
+        randomize_default_dof_pos = False
         randomize_default_dof_pos_range = [-0.05, 0.05]
-        randomize_action_delay = True
+        randomize_action_delay = False
         randomize_imu_offset = False
         delay_ms_range = [0, 20]
 
@@ -328,7 +271,6 @@ class BipedCfgQUB(BaseConfig):
             tracking_lin_vel_y = 1.5
             tracking_ang_vel = 1.0
 
-            # regulation
             base_height = -10.0
             lin_vel_z = -0.5
             ang_vel_xy = -0.05
@@ -361,23 +303,14 @@ class BipedCfgQUB(BaseConfig):
         soft_dof_pos_limit = 0.95
         soft_dof_vel_limit = 1.0
         soft_torque_limit = 0.8
-
-        # Standing posture base height: with hip_pitch 0.30 + knee 0.60 + ankle 0.30,
-        # base drops by roughly leg_len * (1 - cos(hip)) + extra ~ 0.05 m from fully
-        # extended 0.835 m. Use 0.78 as target.
         base_height_target = 0.78
-
         feet_height_target = 0.08
-        # QUB hip-to-hip distance: 0.1159 + 0.1165 = 0.2324 m laterally.
-        # Use slightly narrower minimum (feet can come closer than hips).
         min_feet_distance = 0.18
-
         max_contact_force = 100.0
         kappa_gait_probs = 0.05
         gait_force_sigma = 25.0
         gait_vel_sigma = 0.25
         gait_height_sigma = 0.005
-
         about_landing_threshold = 0.05
 
     class normalization:
@@ -390,10 +323,15 @@ class BipedCfgQUB(BaseConfig):
             height_measurements = 5.0
             contact_forces = 0.01
             torque = 0.05
-            base_z = 1.0 / 0.78  # normalize by nominal base height
+            base_z = 1.0 / 0.78
 
         clip_observations = 100.0
-        clip_actions = 100.0
+        # PRIMARY FIX: was 100.0 -> 5.0
+        # With Normal(mean=0, std=1) and action_scale=0.25, a clipped action of 5
+        # means PD target offset of at most 5*0.25 = 1.25 rad — physical.
+        # The previous 100.0 allowed PD targets up to 25 rad, which produced
+        # impossible torques and caused the simulator to blow up at first step.
+        clip_actions = 5.0
 
     class noise:
         add_noise = True
