@@ -44,7 +44,7 @@ from legged_gym.envs.base.base_config import BaseConfig
 
 class BipedCfgQUB(BaseConfig):
     class env:
-        num_envs = 8192
+        num_envs = 4096
         # 3 (ang_vel) + 3 (gravity) + 13 (dof_pos) + 13 (dof_vel)
         # + 13 (actions) + 2 (clock sin/cos) + 4 (gaits) = 51
         num_observations = 51
