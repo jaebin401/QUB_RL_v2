@@ -168,21 +168,21 @@ class BipedCfgQUB(BaseConfig):
         control_type = "P"
 
         stiffness = {
-            "torso_yaw_joint":      80.0,
+            "torso_yaw_joint":      40.0,
 
-            "L_hip_pitch_joint":    80.0,
-            "L_hip_roll_joint":     80.0,
-            "L_hip_yaw_joint":      80.0,
-            "L_knee_pitch_joint":  120.0,
-            "L_ankle_pitch_joint":  40.0,
-            "L_ankle_roll_joint":   40.0,
+            "L_hip_pitch_joint":    40.0,
+            "L_hip_roll_joint":     40.0,
+            "L_hip_yaw_joint":      40.0,
+            "L_knee_pitch_joint":   60.0,
+            "L_ankle_pitch_joint":  20.0,
+            "L_ankle_roll_joint":   20.0,
 
-            "R_hip_pitch_joint":    80.0,
-            "R_hip_roll_joint":     80.0,
-            "R_hip_yaw_joint":      80.0,
-            "R_knee_pitch_joint":  120.0,
-            "R_ankle_pitch_joint":  40.0,
-            "R_ankle_roll_joint":   40.0,
+            "R_hip_pitch_joint":    40.0,
+            "R_hip_roll_joint":     40.0,
+            "R_hip_yaw_joint":      40.0,
+            "R_knee_pitch_joint":   60.0,
+            "R_ankle_pitch_joint":  20.0,
+            "R_ankle_roll_joint":   20.0,
         }
         damping = {
             "torso_yaw_joint":       2.0,
