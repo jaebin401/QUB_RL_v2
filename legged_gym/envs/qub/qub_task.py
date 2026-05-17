@@ -178,6 +178,37 @@ class BipedQUB(BaseTask):
                 2 * torch.rand_like(self.obs_buf) - 1
             ) * self.noise_scale_vec
 
+        # ===== QUB DEBUG: NaN/Inf check =====
+        if torch.isnan(self.obs_buf).any() or torch.isinf(self.obs_buf).any():
+            print("\n[QUB DEBUG] !!! Found NaN/Inf in obs_buf !!!")
+            print(f"[QUB DEBUG] obs_buf shape: {self.obs_buf.shape}")
+            for d in range(self.obs_buf.shape[1]):
+                col = self.obs_buf[:, d]
+                has_nan = torch.isnan(col).any().item()
+                has_inf = torch.isinf(col).any().item()
+                # only print the bad ones to keep log short
+                if has_nan or has_inf:
+                    print(f"[QUB DEBUG] dim {d:3d}: NaN={has_nan}, Inf={has_inf}, "
+                          f"min={col[~torch.isnan(col) & ~torch.isinf(col)].min().item() if (~torch.isnan(col) & ~torch.isinf(col)).any() else 'all_bad':>10}, "
+                          f"max={col[~torch.isnan(col) & ~torch.isinf(col)].max().item() if (~torch.isnan(col) & ~torch.isinf(col)).any() else 'all_bad':>10}")
+            # also dump suspected source tensors
+            print(f"[QUB DEBUG] base_ang_vel  has NaN: {torch.isnan(self.base_ang_vel).any().item()}, Inf: {torch.isinf(self.base_ang_vel).any().item()}, "
+                  f"max abs: {self.base_ang_vel.abs().max().item():.4f}")
+            print(f"[QUB DEBUG] proj_gravity  has NaN: {torch.isnan(self.projected_gravity).any().item()}, Inf: {torch.isinf(self.projected_gravity).any().item()}, "
+                  f"max abs: {self.projected_gravity.abs().max().item():.4f}")
+            print(f"[QUB DEBUG] dof_pos       has NaN: {torch.isnan(self.dof_pos).any().item()}, Inf: {torch.isinf(self.dof_pos).any().item()}, "
+                  f"max abs: {self.dof_pos.abs().max().item():.4f}")
+            print(f"[QUB DEBUG] dof_vel       has NaN: {torch.isnan(self.dof_vel).any().item()}, Inf: {torch.isinf(self.dof_vel).any().item()}, "
+                  f"max abs: {self.dof_vel.abs().max().item():.4f}")
+            print(f"[QUB DEBUG] actions       has NaN: {torch.isnan(self.actions).any().item()}, Inf: {torch.isinf(self.actions).any().item()}, "
+                  f"max abs: {self.actions.abs().max().item():.4f}")
+            print(f"[QUB DEBUG] gaits         has NaN: {torch.isnan(self.gaits).any().item()}, Inf: {torch.isinf(self.gaits).any().item()}, "
+                  f"max abs: {self.gaits.abs().max().item():.4f}")
+            print(f"[QUB DEBUG] default_dof_pos max abs: {self.default_dof_pos.abs().max().item():.4f}")
+            print(f"[QUB DEBUG] noise_scale_vec max abs: {self.noise_scale_vec.abs().max().item():.4f}")
+            raise RuntimeError("Found NaN/Inf in obs_buf — see [QUB DEBUG] output above")
+        # =====================================
+
         self.obs_history = torch.cat(
             (self.obs_history[:, self.num_obs :], self.obs_buf), dim=-1
         )
