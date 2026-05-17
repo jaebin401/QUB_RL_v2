@@ -185,21 +185,21 @@ class BipedCfgQUB(BaseConfig):
             "R_ankle_roll_joint":   20.0,
         }
         damping = {
-            "torso_yaw_joint":       2.0,
+            "torso_yaw_joint":       1.0,
 
-            "L_hip_pitch_joint":     2.0,
-            "L_hip_roll_joint":      2.0,
-            "L_hip_yaw_joint":       2.0,
-            "L_knee_pitch_joint":    3.0,
-            "L_ankle_pitch_joint":   1.0,
-            "L_ankle_roll_joint":    1.0,
+            "L_hip_pitch_joint":     1.0,
+            "L_hip_roll_joint":      1.0,
+            "L_hip_yaw_joint":       1.0,
+            "L_knee_pitch_joint":    1.5,
+            "L_ankle_pitch_joint":   0.8,
+            "L_ankle_roll_joint":    0.8,
 
-            "R_hip_pitch_joint":     2.0,
-            "R_hip_roll_joint":      2.0,
-            "R_hip_yaw_joint":       2.0,
-            "R_knee_pitch_joint":    3.0,
-            "R_ankle_pitch_joint":   1.0,
-            "R_ankle_roll_joint":    1.0,
+            "R_hip_pitch_joint":     1.0,
+            "R_hip_roll_joint":      1.0,
+            "R_hip_yaw_joint":       1.0,
+            "R_knee_pitch_joint":    1.5,
+            "R_ankle_pitch_joint":   0.8,
+            "R_ankle_roll_joint":    0.8,
         }
 
         decimation = 8
@@ -364,7 +364,7 @@ class BipedCfgQUB(BaseConfig):
             solver_type = 1
             num_position_iterations = 4
             num_velocity_iterations = 0
-            contact_offset = 0.01
+            contact_offset = 0.05
             rest_offset = 0.0
             bounce_threshold_velocity = 0.5
             max_depenetration_velocity = 100.0
