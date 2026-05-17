@@ -2,6 +2,34 @@
 <!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
      Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+
+<!-- ============================================================
+     QUB URDF — collision simplified for RL training (Phase A).
+
+     Initial RL training diverged at iter 2 with value loss ~10^24,
+     diagnosed as physics-level penetration spikes from STL mesh
+     collisions. The leg geometry's joint limits prevent X-leg or
+     hyperextension self-collision, so leg-link collision is not
+     needed during baseline training.
+
+     Collision kept on:
+       - base_link    (already a primitive box, used for fall
+                       termination via terminate_after_contacts_on)
+       - pelvis_link  (used for fall termination)
+       - L_foot_link  (ground contact for locomotion)
+       - R_foot_link  (ground contact for locomotion)
+
+     Collision commented out on (XML-commented, easy to restore):
+       - L/R_hip_r_link, L/R_hip_y_link
+       - L/R_thigh_link
+       - L/R_calf_link
+       - L/R_ankle_link
+
+     If baseline training is stable, consider:
+       - converting pelvis/foot meshes to box primitives (v1 lesson)
+       - restoring leg-link collisions for sim-to-real robustness
+     ============================================================ -->
+
 <robot
   name="QUB">
   <link name="base_link">
@@ -122,6 +150,7 @@
           rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -131,6 +160,7 @@
           filename="../meshes/collision/R_hip_r_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="R_hip_pitch_joint" type="revolute">
     <origin
@@ -174,6 +204,7 @@
           rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -183,6 +214,7 @@
           filename="../meshes/collision/R_hip_y_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="R_hip_roll_joint" type="revolute">
     <origin
@@ -226,6 +258,7 @@
           rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -235,6 +268,7 @@
           filename="../meshes/collision/R_thigh_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="R_hip_yaw_joint" type="revolute">
     <origin
@@ -278,6 +312,7 @@
           rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -287,6 +322,7 @@
           filename="../meshes/collision/R_calf_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="R_knee_pitch_joint" type="revolute">
     <origin
@@ -330,6 +366,7 @@
           rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -339,6 +376,7 @@
           filename="../meshes/collision/R_ankle_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="R_ankle_pitch_joint" type="revolute">
     <origin
@@ -434,6 +472,7 @@
           rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -443,6 +482,7 @@
           filename="../meshes/collision/L_hip_r_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="L_hip_pitch_joint" type="revolute">
     <origin
@@ -486,6 +526,7 @@
           rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -495,6 +536,7 @@
           filename="../meshes/collision/L_hip_y_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="L_hip_roll_joint" type="revolute">
     <origin
@@ -538,6 +580,7 @@
           rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -547,6 +590,7 @@
           filename="../meshes/collision/L_thigh_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="L_hip_yaw_joint" type="revolute">
     <origin
@@ -590,6 +634,7 @@
           rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -599,6 +644,7 @@
           filename="../meshes/collision/L_calf_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="L_knee_pitch_joint" type="revolute">
     <origin
@@ -642,6 +688,7 @@
           rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" />
       </material>
     </visual>
+    <!-- collision disabled for RL baseline (restore by removing comment markers)
     <collision>
       <origin
         xyz="0 0 0"
@@ -651,6 +698,7 @@
           filename="../meshes/collision/L_ankle_link.STL" />
       </geometry>
     </collision>
+    -->
   </link>
   <joint name="L_ankle_pitch_joint" type="revolute">
     <origin
