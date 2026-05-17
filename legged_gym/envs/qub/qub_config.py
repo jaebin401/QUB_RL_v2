@@ -23,7 +23,7 @@
 # FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
 # DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
 # SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# CAUSED AND ON ANY THEORY OF LIABfILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
@@ -367,7 +367,7 @@ class BipedCfgQUB(BaseConfig):
             contact_offset = 0.05
             rest_offset = 0.0
             bounce_threshold_velocity = 0.5
-            max_depenetration_velocity = 100.0
+            max_depenetration_velocity = 1.0
             max_gpu_contact_pairs = 2 ** 23
             default_buffer_size_multiplier = 5
             contact_collection = 2
