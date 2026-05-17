@@ -29,15 +29,18 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 #
-# QUB cfg — Phase A + first-step stabilization fixes.
+# QUB cfg — Phase A + first-step stabilization + reward-scale rebalancing.
 #
-# v1 history: SW2URDF inertia symmetry caused simulation instability.
-# Initial Phase A run blew up at first physics step (dof_pos/dof_vel -> NaN,
-# actions ~119 even with clip=100, sampled from N(0,1) policy at init).
-# Stabilization changes applied here (vs prior Phase A cfg):
-#   - clip_actions: 100 -> 5    (most important; prevents PD-controller blow-up)
-#   - domain_rand.* :  all toggleable randomizations turned OFF until baseline
-#                       walks stably (then re-enable for sim-to-real robustness)
+# Run history:
+#   Phase A initial:    NaN at first physics step (actions clipped at 100
+#                       sent >2000 Nm torque to PD controller).
+#   clip_actions=5 fix: training survived 2 iterations but value loss
+#                       grew to 10^19 -> 10^24, then NaN at iter 2 mid-step.
+#                       Diagnosed: rew_ang_vel_xy = -1.9 at iter 1 means
+#                       base_ang_vel ~38 rad/s; large penalties + small
+#                       clip_single_reward (5) let value function explode.
+# Rebalanced scales below (vs SF baseline) to keep per-step penalties under
+# clip_single_reward=1.0 even when robot misbehaves.
 
 from legged_gym.envs.base.base_config import BaseConfig
 
@@ -231,9 +234,6 @@ class BipedCfgQUB(BaseConfig):
         thickness = 0.01
 
     class domain_rand:
-        # TEMPORARILY DISABLED for stabilization (re-enable once baseline walks).
-        # If any of these caused the first-step NaN blow-up, turning them off
-        # narrows down the source.
         randomize_friction = False
         friction_range = [0.0, 1.6]
         randomize_restitution = False
@@ -244,7 +244,7 @@ class BipedCfgQUB(BaseConfig):
         rand_com_vec = [0.03, 0.02, 0.03]
         randomize_inertia = False
         randomize_inertia_range = [0.8, 1.2]
-        push_robots = False          # was True
+        push_robots = False
         push_interval_s = 7
         max_push_vel_xy = 1.0
         rand_force = False
@@ -265,23 +265,26 @@ class BipedCfgQUB(BaseConfig):
 
     class rewards:
         class scales:
+            # Tracking (positive rewards)
             keep_balance = 1.0
-
             tracking_lin_vel_x = 1.5
             tracking_lin_vel_y = 1.5
             tracking_ang_vel = 1.0
 
-            base_height = -10.0
-            lin_vel_z = -0.5
-            ang_vel_xy = -0.05
+            # ====== Regulation (negative rewards) ======
+            # Iter-1 diagnostics showed rew_ang_vel_xy=-1.9 dominating loss.
+            # Scaled down 5-10x to keep per-step penalties below clip=1.0.
+            base_height = -1.0       # was -10
+            lin_vel_z = -0.1         # was -0.5
+            ang_vel_xy = -0.01       # was -0.05
             torques = -0.00008
             dof_acc = -2.5e-7
             action_rate = -0.01
             dof_pos_limits = -2.0
-            collision = -100.0
+            collision = -10.0        # was -100
             action_smooth = -0.01
-            orientation = -5.0
-            feet_distance = -100.0
+            orientation = -1.0       # was -5.0
+            feet_distance = -10.0    # was -100
             feet_regulation = -0.05
             tracking_contacts_shaped_force = -2.0
             tracking_contacts_shaped_vel = -2.0
@@ -290,13 +293,17 @@ class BipedCfgQUB(BaseConfig):
             ankle_torque_limits = -0.1
             power = -2e-4
             relative_feet_height_tracking = 1.0
-            zero_command_nominal_state = -10.0
+            zero_command_nominal_state = -1.0   # was -10
             keep_ankle_pitch_zero_in_air = 1.0
-            foot_landing_vel = -10.0
+            foot_landing_vel = -2.0  # was -10
 
         only_positive_rewards = False
         clip_reward = 100
-        clip_single_reward = 5
+        # ====== Per-step single-reward clip ======
+        # Iter-0/1 showed rew_ang_vel_xy = -1.9 (well above 1.0). Now with
+        # scales reduced, this should comfortably fit under clip=1.0 and
+        # avoid value-function explosion.
+        clip_single_reward = 1.0   # was 5
         tracking_sigma = 0.2
         ang_tracking_sigma = 0.25
         height_tracking_sigma = 0.01
@@ -326,11 +333,6 @@ class BipedCfgQUB(BaseConfig):
             base_z = 1.0 / 0.78
 
         clip_observations = 100.0
-        # PRIMARY FIX: was 100.0 -> 5.0
-        # With Normal(mean=0, std=1) and action_scale=0.25, a clipped action of 5
-        # means PD target offset of at most 5*0.25 = 1.25 rad — physical.
-        # The previous 100.0 allowed PD targets up to 25 rad, which produced
-        # impossible torques and caused the simulator to blow up at first step.
         clip_actions = 5.0
 
     class noise:
@@ -404,7 +406,10 @@ class BipedCfgPPOQUB(BaseConfig):
         gamma = 0.99
         lam = 0.95
         desired_kl = 0.01
-        max_grad_norm = 1.0
+        # ====== Stricter gradient clipping ======
+        # Iter-1 value loss = 10^24 indicates massive gradients leaking
+        # into the policy. Tightened from 1.0 to 0.5 for stability.
+        max_grad_norm = 0.5
 
         est_learning_rate = 1.0e-3
         ts_learning_rate = 1.0e-4
