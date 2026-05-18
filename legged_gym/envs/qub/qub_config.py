@@ -364,7 +364,7 @@ class BipedCfgQUB(BaseConfig):
             solver_type = 1
             num_position_iterations = 4
             num_velocity_iterations = 0
-            contact_offset = 0.05
+            contact_offset = 0.01
             rest_offset = 0.0
             bounce_threshold_velocity = 0.5
             max_depenetration_velocity = 1.0
